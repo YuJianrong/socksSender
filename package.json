@@ -8,5 +8,8 @@
     "server": "node ./src/httpServer.js"
   },
   "author": "Jianrong Yu",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "open": "0.0.5"
+  }
 }

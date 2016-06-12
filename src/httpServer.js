@@ -25,7 +25,7 @@ https.createServer( {
   cert: fs.readFileSync('./certificate/cert.pem', 'utf-8')
 } , (req, res) => {
   routes.some(route => {
-    if (route.reg.test(req.url)){
+    if (route.reg === req.url || typeof route.reg === "object" && route.reg.test(req.url)){
       route.cb(req, res);
       return true;
     }
@@ -61,31 +61,69 @@ register(/\/saveData$/, (req, res) => {
   });
 });
 
-register(/.*/, (req, res) => {
-  res.writeHead(404);
-  res.end('Feature not found');
+register("/index", (req, res) =>{
+  res.writeHead(200, {'Content-Type': 'text/html'});
+  res.end(fs.readFileSync("./page/server.html"));
+});
+
+register("/script", (req, res) =>{
+  res.writeHead(200, {'Content-Type': 'application/javascript'});
+  res.end(fs.readFileSync("./page/script.js"));
 });
 
 function sendCommand(command, value){
   console.log(`command send: ${command}`);
 
-  var data = {command, value};
+  var commandData = {command, value};
 
-  var req = https.request({
-    hostname: server.hostname,
-    port: server.port,
-    path: "/command",
-    method: "POST",
-    rejectUnauthorized: false,
-  }, res => {
-    res.on('data', d=>{
-      console.log(d.toString("utf-8"));
+  return new Promise((resolve, reject) => {
+    var req = https.request({
+      hostname: server.hostname,
+      port: server.port,
+      path: "/command",
+      method: "POST",
+      rejectUnauthorized: false,
+    }, res => {
+      var chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString())));
+      res.on('error', e => reject(e));
     });
+    req.end(JSON.stringify(commandData));
   });
-  req.end(JSON.stringify(data));
 }
+
+const commandHandler = {
+  getState: (val , resolve) => resolve({ "save-to" : "~/Desktop/", "download-state": "no"}),
+  remoteCommand: (val, resolve) => sendCommand(val.command, val.value).then(resData=>resolve(resData))
+};
+
+register("/command", (req, res)=>{
+  var chunks = [];
+  req.on('data', chunk=> chunks.push(chunk));
+  req.on("end", ()=>{
+    let data = JSON.parse(Buffer.concat(chunks).toString());
+    if (data.command !== "getState") {
+      console.log(`local command: ${data.command}`);
+    }
+    res.writeHead(200);
+    (new Promise((resolve, reject)=>commandHandler[data.command].call(null, data.value, resolve)))
+    .then(resData=>res.end(JSON.stringify(resData||"success")));
+  });
+});
+
+register(/.*/, (req, res) => {
+  res.writeHead(404);
+  res.end('Feature not found');
+});
+
+
 
 sendCommand("init", {
   blocksize: 100,
   port: config.port
+}).then(state=>{
+  if (state === "success"){
+    require("open")(`https://localhost:${config.port}/index`);
+  }
 });

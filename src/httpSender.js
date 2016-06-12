@@ -43,11 +43,13 @@ let blocksize = 1;
 const commandHandler = {
   init: (val, req) => {
     blocksize = val.blocksize;
-    serverConfig.hostname = req.hostname;
+    serverConfig.hostname = req.connection.remoteAddress.replace(/.*:/,"");
     serverConfig.port = val.port;
     console.dir(serverConfig);
-    debugger;
-  }
+    return "success";
+  },
+  listDir: val => fs.readdirSync(val.path).map(name => ({name, info: (stat=>({size:stat.size,file:stat.isFile()}))(fs.statSync(path.join(val.path, name)))}))
+
 };
 
 register(/^\/command$/, (req, res) => {
