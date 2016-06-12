@@ -4,6 +4,14 @@ const https = require('https');
 const fs = require('fs');
 const crypto = require('crypto');
 
+const server = {
+  hostname: "127.0.0.1",
+  port: 8085
+};
+
+const config = {
+  port: 8013
+};
 
 console.log("start server");
 
@@ -23,7 +31,7 @@ https.createServer( {
     }
     return false;
   });
-}).listen(8013);
+}).listen(config.port);
 
 
 
@@ -58,3 +66,26 @@ register(/.*/, (req, res) => {
   res.end('Feature not found');
 });
 
+function sendCommand(command, value){
+  console.log(`command send: ${command}`);
+
+  var data = {command, value};
+
+  var req = https.request({
+    hostname: server.hostname,
+    port: server.port,
+    path: "/command",
+    method: "POST",
+    rejectUnauthorized: false,
+  }, res => {
+    res.on('data', d=>{
+      console.log(d.toString("utf-8"));
+    });
+  });
+  req.end(JSON.stringify(data));
+}
+
+sendCommand("init", {
+  blocksize: 100,
+  port: config.port
+});

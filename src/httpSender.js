@@ -7,8 +7,10 @@ const path = require("path");
 
 let fileConfigs = {};
 const serverConfig = {
-  hostname: "localhost",
-  port: 8010
+};
+
+const config = {
+  port: 8085
 };
 
 console.log("start server");
@@ -29,10 +31,44 @@ https.createServer( {
     }
     return false;
   });
-}).listen(8013);
+}).listen(config.port);
 
+register(/^\/$/, (req, res) => {
+  res.writeHead(200);
+  res.end('hello world\n');
+});
 
-const blocksize = 1;
+let blocksize = 1;
+
+const commandHandler = {
+  init: (val, req) => {
+    blocksize = val.blocksize;
+    serverConfig.hostname = req.hostname;
+    serverConfig.port = val.port;
+    console.dir(serverConfig);
+    debugger;
+  }
+};
+
+register(/^\/command$/, (req, res) => {
+
+  var chunks = [];
+  req.on('data', chunk=>{
+    chunks.push(chunk);
+  });
+  req.on("end", ()=>{
+    let data = JSON.parse(Buffer.concat(chunks).toString());
+    console.log(`run command: ${data.command}`);
+    res.writeHead(200);
+    res.end(JSON.stringify(commandHandler[data.command].call(null, data.value, req) || "success"));
+  });
+});
+
+register(/.*/, (req, res) => {
+  res.writeHead(404);
+  res.end('Feature not found');
+});
+
 
 function prepareFile(filePath){
   let config = {
@@ -91,8 +127,8 @@ function sendFilePart(filePath, blocknum){
   });
 }
 
-prepareFile("package.json");
+// prepareFile("package.json");
 
-sendFilePart("package.json", 0);
-sendFilePart("package.json", 1);
-sendFilePart("package.json", 2);
+// sendFilePart("package.json", 0);
+// sendFilePart("package.json", 1);
+// sendFilePart("package.json", 2);
