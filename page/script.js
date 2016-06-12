@@ -5,7 +5,7 @@ function $(selector){
 }
 
 function sendCommand(command, value){
-  return fetch("/command", {method:"POST", body: JSON.stringify({command, value})}).then(reader=>reader.json());
+  return fetch("/command", {method:"POST", body: JSON.stringify({command, value})}).then(reader=>reader.status === 200 ? reader.json():Promise.reject(reader.headers.get("message")));
 }
 
 setInterval(()=>sendCommand("getState").then(val=>{
@@ -37,7 +37,7 @@ function gotoDir(path){
         let li = $("#template .file-item").cloneNode(true);
         li.querySelector(".name").textContent = item.name;
         li.querySelector("button").addEventListener("click", ()=>{
-          alert(JSON.stringify(item));
+          sendCommand("startDownload", {file: item, path}).then(()=>null,(e)=>alert(e));
         });
         ul.appendChild(li);
       } else {

@@ -40,6 +40,8 @@ register(/^\/$/, (req, res) => {
 
 let blocksize = 1;
 
+var downloadInfo = null;
+
 const commandHandler = {
   init: (val, req) => {
     blocksize = val.blocksize;
@@ -48,7 +50,22 @@ const commandHandler = {
     console.dir(serverConfig);
     return "success";
   },
-  listDir: val => fs.readdirSync(val.path).map(name => ({name, info: (stat=>({size:stat.size,file:stat.isFile()}))(fs.statSync(path.join(val.path, name)))}))
+  listDir: val => fs.readdirSync(val.path).map(name => ({name, info: (stat=>({size:stat.size,file:stat.isFile()}))(fs.statSync(path.join(val.path, name)))})),
+  startDownload: val=>{
+    downloadInfo = {
+      file: val.file,
+      path: val.path,
+    };
+    prepareFile(path.join(val.path, val.file.name));
+
+// sendFilePart("package.json", 0);
+// sendFilePart("package.json", 1);
+// sendFilePart("package.json", 2);
+    return "success";
+  },
+  reset: val=>{
+    downloadInfo = null;
+  }
 
 };
 
@@ -76,15 +93,23 @@ function prepareFile(filePath){
   let config = {
     stat: fs.statSync(filePath),
     fd: fs.openSync(filePath, "r"),
-    start: Date.now()
+    start: Date.now(),
+    blocks: []
   };
-  config.blocks = Math.ceil(config.stat.size / blocksize);
+  config.blockNum = Math.ceil(config.stat.size / blocksize);
+  for(var i=0; i< downloadInfo.blockNum; ++i) {
+    config.blocks.push("not-uploaded");
+  };
   fileConfigs[filePath] = config;
+}
+
+function closeFile(){
+  fs.closeSync(config.fd);
 }
 
 function sendFilePart(filePath, blocknum){
   const config = fileConfigs[filePath];
-  const size = blocknum === config.blocks - 1 ? config.stat.size % blocksize : blocksize;
+  const size = blocknum === config.blockNum - 1 ? config.stat.size % blocksize : blocksize;
   const buf = new Buffer(size);
 
   (new Promise((resolve,reject) => fs.read(

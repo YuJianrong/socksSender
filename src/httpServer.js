@@ -40,26 +40,6 @@ register(/^\/$/, (req, res) => {
   res.end('hello world\n');
 });
 
-register(/\/saveData$/, (req, res) => {
-  var chunks = [];
-  const hash = crypto.createHash("md5");
-  req.on('data', chunk=>{
-    hash.update(chunk);
-    chunks.push(chunk);
-  });
-  req.on("end", ()=>{
-    let data = Buffer.concat(chunks);
-    if (hash.digest("hex") !== req.headers.md5) {
-      res.writeHead(500);
-      res.end('md5-check-error');
-      return;
-    } else {
-      fs.writeFileSync(decodeURI(req.headers.file) + "." + req.headers.blocknum, data);
-      res.writeHead(200);
-      res.end('block-saved');
-    }
-  });
-});
 
 register("/index", (req, res) =>{
   res.writeHead(200, {'Content-Type': 'text/html'});
@@ -93,10 +73,60 @@ function sendCommand(command, value){
   });
 }
 
+var downloadInfo = null;
+
 const commandHandler = {
   getState: (val , resolve) => resolve({ "save-to" : "~/Desktop/", "download-state": "no"}),
-  remoteCommand: (val, resolve) => sendCommand(val.command, val.value).then(resData=>resolve(resData))
+  remoteCommand: (val, resolve, reject) => sendCommand(val.command, val.value).then(resData=>resolve(resData), e=>reject(e.message)),
+  startDownload: (val, resolve, reject) => {
+    if (downloadInfo) {
+      reject("One file in downloading! Multiple download is not supported!");
+    } else {
+      downloadInfo = {
+        file: val.file,
+        path: val.path,
+        blockNum: Math.ceil(val.file.info.size / blocksize),
+        loadedBlock: 0
+      };
+      sendCommand("startDownload", val);
+      resolve("success");
+    }
+  }
 };
+
+register("/saveData", (req, res) => {
+  var chunks = [];
+  const hash = crypto.createHash("md5");
+  req.on('data', chunk=>{
+    hash.update(chunk);
+    chunks.push(chunk);
+  });
+  req.on("end", ()=>{
+    let data = Buffer.concat(chunks);
+    if (hash.digest("hex") !== req.headers.md5) {
+      res.writeHead(500, {state: 'md5-check-error'});
+      res.end();
+      return;
+    } else {
+      if (!downloadInfo || downloadInfo.file.name !== decodeURI(req.headers.file)) {
+        res.writeHead(500, {state: 'wrong-file'});
+        res.end();
+      } else {
+        fs.writeFileSync(decodeURI(req.headers.file) + "." + req.headers.blocknum, data);
+        downloadInfo.loadedBlock ++;
+        if (downloadInfo.loadedBlock === downloadInfo.blockNum) {
+          console.log("download Finished!");
+        }
+        res.writeHead(200, {state: 'block-saved'});
+        res.end();
+      }
+    }
+  });
+  req.on("error", e => {
+    res.writeHead(500, {state:"error"});
+    res.end(e.message);
+  });
+});
 
 register("/command", (req, res)=>{
   var chunks = [];
@@ -106,9 +136,14 @@ register("/command", (req, res)=>{
     if (data.command !== "getState") {
       console.log(`local command: ${data.command}`);
     }
-    res.writeHead(200);
-    (new Promise((resolve, reject)=>commandHandler[data.command].call(null, data.value, resolve)))
-    .then(resData=>res.end(JSON.stringify(resData||"success")));
+    (new Promise((resolve, reject)=>commandHandler[data.command].call(null, data.value, resolve, reject)))
+    .then(resData=>{
+      res.writeHead(200);
+      res.end(JSON.stringify(resData||"success"));
+    }, e=>{
+      res.writeHead(500, {message:e});
+      res.end(JSON.stringify("error"));
+    });
   });
 });
 
