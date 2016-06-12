@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+.dir-item{
+  color: #579;
+  cursor: pointer;
+}
+.dir-item:hover{
+  color: blue;
+}
+</style>
+</head>
+<body>
+<section class="info">
+  <div><span>Save to:</span><span id="save-to"></span></div>
+  <div><span>Downloading state:</span><span id="download-state"></span></div>
+</section>
+<section class="list">
+  <div>Path: <span id="path"></span></div>
+  <ul id="dir-list"></ul>
+</section>
+<section id="template" style="display:none">
+  <li class="dir-item"><a></a></li>
+  <li class="file-item"><span class="name"></span> <button>download</button></li>
+</section>
+<script src="/script"></script>
+
+</body>
+</html>
+
