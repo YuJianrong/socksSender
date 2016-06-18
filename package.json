@@ -12,6 +12,7 @@
   "author": "Jianrong Yu",
   "license": "MIT",
   "dependencies": {
-    "open": "0.0.5"
+    "open": "0.0.5",
+    "socks5-https-client": "^1.1.3"
   }
 }
