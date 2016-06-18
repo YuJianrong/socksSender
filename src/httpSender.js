@@ -4,14 +4,12 @@ const https = require('https');
 const fs = require('fs');
 const crypto = require('crypto');
 const path = require("path");
+const shttps = require('socks5-https-client');
 
-let fileConfigs = {};
 const serverConfig = {
 };
 
-const config = {
-  port: 8085
-};
+const config = JSON.parse(fs.readFileSync("senderConfig.json"));
 
 console.log("start server");
 
@@ -38,35 +36,58 @@ register(/^\/$/, (req, res) => {
   res.end('hello world\n');
 });
 
-let blocksize = 1;
-
 var downloadInfo = null;
 
 const commandHandler = {
   init: (val, req) => {
-    blocksize = val.blocksize;
+    serverConfig.blocksize = val.blocksize;
     serverConfig.hostname = req.connection.remoteAddress.replace(/.*:/,"");
     serverConfig.port = val.port;
     console.dir(serverConfig);
     return "success";
   },
-  listDir: val => fs.readdirSync(val.path).map(name => ({name, info: (stat=>({size:stat.size,file:stat.isFile()}))(fs.statSync(path.join(val.path, name)))})),
+  listDir: val => {
+    if (process.platform === 'win32') {
+      if (val.path === "/") {
+        let drivers = [];
+        for (var c=67; c<=90; ++c) {
+          try{
+            fs.readdirSync(String.fromCharCode(c) + ":/");
+            drivers.push({name: String.fromCharCode(c) + ":" , info:{size:0, file: false}});
+          }catch(e){};
+        }
+        return drivers;
+      } else {
+        val.path = val.path.substr(1);
+      }
+    }
+    const files = fs.readdirSync(val.path);
+    const dir = [];
+    for (let i=0; i<files.length; ++i) {
+      try{
+        dir.push({name:files[i],info: (stat=>({size:stat.size,file:stat.isFile()}))(fs.statSync(path.join(val.path, files[i])))});
+      } catch(e){
+      }
+    }
+    return dir;
+  },
   startDownload: val=>{
     downloadInfo = {
       file: val.file,
-      path: val.path,
+      path: process.platform === 'win32' ? val.path.substr(1):val.path,
     };
-    prepareFile(path.join(val.path, val.file.name));
-
-// sendFilePart("package.json", 0);
-// sendFilePart("package.json", 1);
-// sendFilePart("package.json", 2);
+    prepareFile();
+    checkQueue();
     return "success";
   },
   reset: val=>{
+    if (!downloadInfo) {
+      return "success";
+    }
+    fs.closeSync(downloadInfo.fd);
     downloadInfo = null;
+    return "success";
   }
-
 };
 
 register(/^\/command$/, (req, res) => {
@@ -89,35 +110,53 @@ register(/.*/, (req, res) => {
 });
 
 
-function prepareFile(filePath){
-  let config = {
-    stat: fs.statSync(filePath),
-    fd: fs.openSync(filePath, "r"),
-    start: Date.now(),
-    blocks: []
-  };
-  config.blockNum = Math.ceil(config.stat.size / blocksize);
+function prepareFile(){
+  const filePath = path.join(downloadInfo.path, downloadInfo.file.name);
+  downloadInfo.fd = fs.openSync(filePath, "r");
+  downloadInfo.blocks = [];
+  downloadInfo.blockNum = Math.ceil(downloadInfo.file.info.size / serverConfig.blocksize);
   for(var i=0; i< downloadInfo.blockNum; ++i) {
-    config.blocks.push("not-uploaded");
+    downloadInfo.blocks.push("not-uploaded");
   };
-  fileConfigs[filePath] = config;
 }
 
-function closeFile(){
-  fs.closeSync(config.fd);
+function updateBlock(fd, blockid, status){
+  if (!downloadInfo || downloadInfo.fd !== fd) {
+    return;
+  }
+  downloadInfo.blocks[blockid] = status;
+  checkQueue();
 }
 
-function sendFilePart(filePath, blocknum){
-  const config = fileConfigs[filePath];
-  const size = blocknum === config.blockNum - 1 ? config.stat.size % blocksize : blocksize;
+function checkQueue(){
+  const concurrentUpload = 3;
+  let currentUpload = downloadInfo.blocks.filter(status => status === "uploading").length;
+  let uploadedNum = 0;
+  for( var i=0; i<downloadInfo.blockNum; ++i){
+    if (currentUpload < concurrentUpload && downloadInfo.blocks[i] === "not-uploaded") {
+      currentUpload ++;
+      sendFilePart(i);
+    }
+    uploadedNum += downloadInfo.blocks[i] === "uploaded" ? 1 : 0;
+  }
+  if (uploadedNum === downloadInfo.blockNum) {
+    commandHandler.reset();
+  }
+}
+
+function sendFilePart(blockid){
+  const size = blockid === downloadInfo.blockNum - 1 ? downloadInfo.file.info.size % serverConfig.blocksize : serverConfig.blocksize;
   const buf = new Buffer(size);
+  downloadInfo.blocks[blockid] = "uploading";
+
+  const fd = downloadInfo.fd;
 
   (new Promise((resolve,reject) => fs.read(
-    config.fd,
+    downloadInfo.fd,
     buf,
     0,
     size,
-    blocknum * blocksize,
+    blockid * serverConfig.blocksize,
     (err, byteRead, buffer) => {
       if (err){
         reject(err);
@@ -129,22 +168,33 @@ function sendFilePart(filePath, blocknum){
     const hash = crypto.createHash("md5");
     hash.update(buf);
 
-    var req = https.request({
+    if(!downloadInfo || fd !== downloadInfo.fd){
+      return;
+    }
+
+    var req = (config.socks5 ? shttps : https).request({
       hostname: serverConfig.hostname,
       port: serverConfig.port,
       path: "/saveData",
       method: "POST",
       rejectUnauthorized: false,
       headers: {
-        file: encodeURI( path.basename(filePath) ),
+        file: encodeURI( path.basename(downloadInfo.file.name) ),
         md5: hash.digest("hex"),
-        blocknum: blocknum,
-        blocksize: blocksize
-      }
+        blockid: blockid
+      },
+      socksHost: config.socks5 ? config.socks5.host: null,
+      socksPort: config.socks5 ? config.socks5.port: null,
     }, res => {
-      res.on('data', d=>{
-        console.log(d.toString("utf-8"));
-      });
+      if (res.statusCode === 200) {
+        updateBlock(fd, blockid, "uploaded");
+      } else {
+        updateBlock(fd, blockid, "not-uploaded");
+      }
+    });
+    req.on("error", (e)=>{
+      console.log(`problem on send block[${blockid}]: ${e.message}`);
+      updateBlock(fd, blockid, "not-uploaded");
     });
 
     req.write(buf);
@@ -154,8 +204,3 @@ function sendFilePart(filePath, blocknum){
   });
 }
 
-// prepareFile("package.json");
-
-// sendFilePart("package.json", 0);
-// sendFilePart("package.json", 1);
-// sendFilePart("package.json", 2);

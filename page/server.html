@@ -9,12 +9,18 @@
 .dir-item:hover{
   color: blue;
 }
+.file-item .size{
+  font-size: 0.8rem;
+}
+#download-state[data-downloading="false"] #stop{
+  display: none;
+}
 </style>
 </head>
 <body>
 <section class="info">
   <div><span>Save to:</span><span id="save-to"></span></div>
-  <div><span>Downloading state:</span><span id="download-state"></span></div>
+  <div id="download-state" data-downloading="false"><span>Downloading state:</span><span class="progress"></span><button id="stop">Stop</button></div>
 </section>
 <section class="list">
   <div>Path: <span id="path"></span></div>
@@ -22,7 +28,7 @@
 </section>
 <section id="template" style="display:none">
   <li class="dir-item"><a></a></li>
-  <li class="file-item"><span class="name"></span> <button>download</button></li>
+  <li class="file-item"><span class="name"></span> <span class="size"></span><button>download</button></li>
 </section>
 <script src="/script"></script>
 

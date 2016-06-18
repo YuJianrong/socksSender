@@ -4,8 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "server": "node ./src/httpServer.js"
+    "server": "node ./src/httpServer.js",
+    "debug-server": "devtool ./src/httpServer.js",
+    "sender": "node ./src/httpSender.js",
+    "debug-sender": "devtool ./src/httpSender.js"
   },
   "author": "Jianrong Yu",
   "license": "MIT",

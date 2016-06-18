@@ -3,15 +3,12 @@
 const https = require('https');
 const fs = require('fs');
 const crypto = require('crypto');
+const path = require("path");
 
-const server = {
-  hostname: "127.0.0.1",
-  port: 8085
-};
-
-const config = {
-  port: 8013
-};
+const config = JSON.parse(fs.readFileSync("serverConfig.json", "utf8"));
+if (!config.blocksize) {
+  config.blocksize = 1024*1024;
+}
 
 console.log("start server");
 
@@ -19,6 +16,7 @@ let routes = [];
 function register( reg, cb ) {
   routes.push({reg, cb});
 }
+
 
 https.createServer( {
   key: fs.readFileSync('./certificate/key.pem', 'utf-8'),
@@ -58,8 +56,8 @@ function sendCommand(command, value){
 
   return new Promise((resolve, reject) => {
     var req = https.request({
-      hostname: server.hostname,
-      port: server.port,
+      hostname: config.server.hostname,
+      port: config.server.port,
       path: "/command",
       method: "POST",
       rejectUnauthorized: false,
@@ -75,8 +73,23 @@ function sendCommand(command, value){
 
 var downloadInfo = null;
 
+function resetDownload(){
+  if (!downloadInfo) {
+    return;
+  }
+  for(var i=0 ; i<downloadInfo.blockNum; ++i) {
+    try{
+      fs.unlinkSync(`${downloadInfo.file.name}.${i}`);
+    } catch(e) {}
+  }
+  downloadInfo = null;
+}
+
 const commandHandler = {
-  getState: (val , resolve) => resolve({ "save-to" : "~/Desktop/", "download-state": "no"}),
+  getState: (val , resolve) => resolve({
+    "save-to" : config["save-to"],
+    "download-state": downloadInfo ? `${downloadInfo.file.name} (${downloadInfo.loadedBlock}/${downloadInfo.blockNum})`: null
+  }),
   remoteCommand: (val, resolve, reject) => sendCommand(val.command, val.value).then(resData=>resolve(resData), e=>reject(e.message)),
   startDownload: (val, resolve, reject) => {
     if (downloadInfo) {
@@ -85,12 +98,17 @@ const commandHandler = {
       downloadInfo = {
         file: val.file,
         path: val.path,
-        blockNum: Math.ceil(val.file.info.size / blocksize),
+        blockNum: Math.ceil(val.file.info.size / config.blocksize),
         loadedBlock: 0
       };
       sendCommand("startDownload", val);
       resolve("success");
     }
+  },
+  resetDownload: (val, resolve) => {
+    resetDownload();
+    sendCommand("reset", val);
+    resolve("success");
   }
 };
 
@@ -112,10 +130,33 @@ register("/saveData", (req, res) => {
         res.writeHead(500, {state: 'wrong-file'});
         res.end();
       } else {
-        fs.writeFileSync(decodeURI(req.headers.file) + "." + req.headers.blocknum, data);
+        fs.writeFileSync(decodeURI(req.headers.file) + "." + req.headers.blockid, data);
         downloadInfo.loadedBlock ++;
         if (downloadInfo.loadedBlock === downloadInfo.blockNum) {
-          console.log("download Finished!");
+          console.log("download Finished, start data merge");
+          let target = path.parse(path.join(config["save-to"].replace("~", process.env.HOME), decodeURI(req.headers.file)));
+          let suffix = 0;
+          while(1){
+            const targetPath = path.join(target.dir, target.name + ( suffix ? ` (${suffix})` : "" ) + target.ext);
+            try{
+              const fd = fs.openSync(targetPath, "ax");
+              for(var i=0; i<downloadInfo.blockNum; ++i) {
+                const buf = fs.readFileSync(decodeURI(req.headers.file) + "." + i);
+                fs.writeSync(fd, buf, 0, buf.length);
+              }
+              fs.closeSync(fd);
+              console.log("done");
+              break;
+            } catch(e){
+              if (e.code === "EEXIST") {
+                suffix ++;
+              } else {
+                console.error(e.message);
+                break;
+              }
+            }
+          }
+          resetDownload();
         }
         res.writeHead(200, {state: 'block-saved'});
         res.end();
@@ -155,7 +196,7 @@ register(/.*/, (req, res) => {
 
 
 sendCommand("init", {
-  blocksize: 100,
+  blocksize: config.blocksize,
   port: config.port
 }).then(state=>{
   if (state === "success"){

@@ -10,8 +10,11 @@ function sendCommand(command, value){
 
 setInterval(()=>sendCommand("getState").then(val=>{
   $("#save-to").textContent = val["save-to"];
-  $("#download-state").textContent = val["download-state"];
+  $("#download-state").setAttribute("data-downloading", val["download-state"] ? "true" : "false");
+  $("#download-state .progress").textContent = val["download-state"] || "not downloading";
 }),1000);
+
+$("#stop").addEventListener("click", () => sendCommand("resetDownload"), false);
 
 function gotoDir(path){
   var ul = $("#dir-list");
@@ -36,6 +39,18 @@ function gotoDir(path){
       if (item.info.file) {
         let li = $("#template .file-item").cloneNode(true);
         li.querySelector(".name").textContent = item.name;
+        let strSize, size = item.info.size;
+        if (size < 1024){
+          strSize = size + "B";
+        } else if ((size/=1024)<1024) {
+          strSize = size.toFixed(2) + "K";
+        } else if ((size/=1024)<1024) {
+          strSize = size.toFixed(2) + "M";
+        } else if ((size/=1024)<1024) {
+          strSize = size.toFixed(2) + "G";
+        }
+
+        li.querySelector(".size").textContent = `(${strSize})`;
         li.querySelector("button").addEventListener("click", ()=>{
           sendCommand("startDownload", {file: item, path}).then(()=>null,(e)=>alert(e));
         });
