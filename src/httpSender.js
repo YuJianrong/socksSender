@@ -49,6 +49,10 @@ const commandHandler = {
     receiverConfig.hostname = req.connection.remoteAddress.replace(/.*:/, "");
     receiverConfig.port = val.port;
     console.dir(receiverConfig);
+    for (let key in downloadInfos) {
+      fs.closeSync(downloadInfos[key].fd);
+      delete downloadInfos[key];
+    }
     return "success";
   },
   listDir: val => {
@@ -172,7 +176,7 @@ function sendFilePart(key, blockid) {
       }
     });
     req.on("error", (e) => {
-      log(`problem on send block[${blockid}]: ${e.message}`);
+      log(`problem on send block[${blockid}]: ${e.message}, retry in 60s`);
       // retry in 60 s
       setTimeout(() => sendFilePart(key, blockid), 60 * 1000);
     });

@@ -4,6 +4,7 @@
     "hostname": "10.0.0.2",
     "port": 1000
   },
+  "concurrent": 5,
   "save-to": "~/Desktop/"
 }
 

@@ -10,7 +10,7 @@ if (!receiverConfig.blocksize) {
   receiverConfig.blocksize = 1024*1024;
 }
 
-const CONCURRENT_DOWNLOAD = 3;
+let concurrentDownload = receiverConfig.concurrent || 3;
 
 
 function log(msg) {
@@ -144,7 +144,7 @@ function checkQueue(){
   }
   let downloading = downloadInfo.blocks.filter(status => status === "downloading").length;
   for( let blockid=0; blockid<downloadInfo.blockNum; ++blockid){
-    if (downloading < CONCURRENT_DOWNLOAD && downloadInfo.blocks[blockid] === "not-downloaded") {
+    if (downloading < concurrentDownload && downloadInfo.blocks[blockid] === "not-downloaded") {
       downloading ++;
       downloadInfo.blocks[blockid] = "downloading";
       sendCommand("getBlock", { file: downloadInfo.file, path: downloadInfo.path, blockid}, `${downloadInfo.file.name} : [${blockid}]` )
