@@ -56,7 +56,7 @@ register("/script", (req, res) =>{
 });
 
 function sendCommand(command, value, extraMsg){
-  log(`command send: ${command} ${extraMsg || "" }}`);
+  log(`command send: ${command} ${extraMsg || "" }`);
 
   var commandData = {command, value};
 
@@ -67,11 +67,16 @@ function sendCommand(command, value, extraMsg){
       path: "/command",
       method: "POST",
       rejectUnauthorized: false,
+      timeout: 2*60*1000
     }, res => {
       var chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString())));
       res.on('error', e => reject(e));
+    });
+    req.on("error", (e) => {
+      log(`Error: ${e.message}`);
+      reject(e);
     });
     req.end(JSON.stringify(commandData));
   });
@@ -140,11 +145,17 @@ function checkQueue(){
     return;
   }
   let downloading = downloadInfo.blocks.filter(status => status === "downloading").length;
-  for( var blockid=0; blockid<downloadInfo.blockNum; ++blockid){
+  for( let blockid=0; blockid<downloadInfo.blockNum; ++blockid){
     if (downloading < CONCURRENT_DOWNLOAD && downloadInfo.blocks[blockid] === "not-downloaded") {
       downloading ++;
       downloadInfo.blocks[blockid] = "downloading";
-      sendCommand("getBlock", { file: downloadInfo.file, path: downloadInfo.path, blockid}, `${downloadInfo.file.name} : [${blockid}]` );
+      sendCommand("getBlock", { file: downloadInfo.file, path: downloadInfo.path, blockid}, `${downloadInfo.file.name} : [${blockid}]` )
+      .catch(e => {
+        log(`Error: ${e.message}`);
+        downloadInfo.blocks[blockid] = "not-downloaded";
+        // retry in 60 s
+        setTimeout(checkQueue, 60 * 1000);
+      });
 //      sendFilePart(i);
     }
   }
