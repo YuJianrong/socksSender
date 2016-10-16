@@ -1,6 +1,6 @@
 {
   "port": 2000,
-  "server": {
+  "sender": {
     "hostname": "10.0.0.2",
     "port": 1000
   },

@@ -5,12 +5,19 @@ const fs = require('fs');
 const crypto = require('crypto');
 const path = require("path");
 
-const config = JSON.parse(fs.readFileSync("serverConfig.json", "utf8"));
-if (!config.blocksize) {
-  config.blocksize = 1024*1024;
+const receiverConfig = JSON.parse(fs.readFileSync("receiverConfig.json", "utf8"));
+if (!receiverConfig.blocksize) {
+  receiverConfig.blocksize = 1024*1024;
 }
 
-console.log("start server");
+const CONCURRENT_DOWNLOAD = 3;
+
+
+function log(msg) {
+  console.log(`${(new Date()).toISOString()} ${msg}`)
+}
+
+log("start receiver");
 
 let routes = [];
 function register( reg, cb ) {
@@ -29,8 +36,7 @@ https.createServer( {
     }
     return false;
   });
-}).listen(config.port);
-
+}).listen(receiverConfig.port);
 
 
 register(/^\/$/, (req, res) => {
@@ -41,7 +47,7 @@ register(/^\/$/, (req, res) => {
 
 register("/index", (req, res) =>{
   res.writeHead(200, {'Content-Type': 'text/html'});
-  res.end(fs.readFileSync("./page/server.html"));
+  res.end(fs.readFileSync("./page/receiver.html"));
 });
 
 register("/script", (req, res) =>{
@@ -49,15 +55,15 @@ register("/script", (req, res) =>{
   res.end(fs.readFileSync("./page/script.js"));
 });
 
-function sendCommand(command, value){
-  console.log(`command send: ${command}`);
+function sendCommand(command, value, extraMsg){
+  log(`command send: ${command} ${extraMsg || "" }}`);
 
   var commandData = {command, value};
 
   return new Promise((resolve, reject) => {
     var req = https.request({
-      hostname: config.server.hostname,
-      port: config.server.port,
+      hostname: receiverConfig.sender.hostname,
+      port: receiverConfig.sender.port,
       path: "/command",
       method: "POST",
       rejectUnauthorized: false,
@@ -87,7 +93,7 @@ function resetDownload(){
 
 const commandHandler = {
   getState: (val , resolve) => resolve({
-    "save-to" : config["save-to"],
+    "save-to" : receiverConfig["save-to"],
     "download-state": downloadInfo ? `${downloadInfo.file.name} (${downloadInfo.loadedBlock}/${downloadInfo.blockNum})`: null
   }),
   remoteCommand: (val, resolve, reject) => sendCommand(val.command, val.value).then(resData=>resolve(resData), e=>reject(e.message)),
@@ -95,22 +101,54 @@ const commandHandler = {
     if (downloadInfo) {
       reject("One file in downloading! Multiple download is not supported!");
     } else {
+      let blockNum= Math.ceil(val.file.info.size / receiverConfig.blocksize);
       downloadInfo = {
         file: val.file,
         path: val.path,
-        blockNum: Math.ceil(val.file.info.size / config.blocksize),
-        loadedBlock: 0
+        blockNum,
+        loadedBlock: 0,
+        blocks: Array(blockNum)
       };
-      sendCommand("startDownload", val);
+      checkForResume();
+      checkQueue();
+//      sendCommand("startDownload", val);
       resolve("success");
     }
   },
   resetDownload: (val, resolve) => {
     resetDownload();
-    sendCommand("reset", val);
+//    sendCommand("reset", val);
     resolve("success");
   }
 };
+
+function checkForResume(){
+  for(let blockid=0; blockid<downloadInfo.blockNum; ++blockid) {
+    const blockName = downloadInfo.file.name + "." + blockid;
+    const size = blockid === downloadInfo.blockNum - 1 ? downloadInfo.file.info.size % receiverConfig.blocksize : receiverConfig.blocksize;
+    if (fs.existsSync(blockName) && fs.statSync(blockName).size === size) {
+      downloadInfo.blocks[blockid] = "downloaded";
+      downloadInfo.loadedBlock ++;
+    } else {
+      downloadInfo.blocks[blockid] = "not-downloaded";
+    }
+  }
+}
+
+function checkQueue(){
+  if (!downloadInfo){
+    return;
+  }
+  let downloading = downloadInfo.blocks.filter(status => status === "downloading").length;
+  for( var blockid=0; blockid<downloadInfo.blockNum; ++blockid){
+    if (downloading < CONCURRENT_DOWNLOAD && downloadInfo.blocks[blockid] === "not-downloaded") {
+      downloading ++;
+      downloadInfo.blocks[blockid] = "downloading";
+      sendCommand("getBlock", { file: downloadInfo.file, path: downloadInfo.path, blockid}, `${downloadInfo.file.name} : [${blockid}]` );
+//      sendFilePart(i);
+    }
+  }
+}
 
 register("/saveData", (req, res) => {
   var chunks = [];
@@ -127,14 +165,16 @@ register("/saveData", (req, res) => {
       return;
     } else {
       if (!downloadInfo || downloadInfo.file.name !== decodeURI(req.headers.file)) {
-        res.writeHead(500, {state: 'wrong-file'});
+        // the download may had been reset, so response 200 to stop resend the block
+        res.writeHead(200, {state: 'wrong-file'});
         res.end();
       } else {
         fs.writeFileSync(decodeURI(req.headers.file) + "." + req.headers.blockid, data);
         downloadInfo.loadedBlock ++;
+        downloadInfo.blocks[req.headers.blockid] = "downloaded";
         if (downloadInfo.loadedBlock === downloadInfo.blockNum) {
-          console.log("download Finished, start data merge");
-          let target = path.parse(path.join(config["save-to"].replace("~", process.env.HOME), decodeURI(req.headers.file)));
+          log("download Finished, start data merge");
+          let target = path.parse(path.join(receiverConfig["save-to"].replace("~", process.env.HOME), decodeURI(req.headers.file)));
           let suffix = 0;
           while(1){
             const targetPath = path.join(target.dir, target.name + ( suffix ? ` (${suffix})` : "" ) + target.ext);
@@ -145,18 +185,20 @@ register("/saveData", (req, res) => {
                 fs.writeSync(fd, buf, 0, buf.length);
               }
               fs.closeSync(fd);
-              console.log("done");
+              log("done");
               break;
             } catch(e){
               if (e.code === "EEXIST") {
                 suffix ++;
               } else {
-                console.error(e.message);
+                log(`Error: ${e.message}`);
                 break;
               }
             }
           }
           resetDownload();
+        } else {
+          checkQueue();
         }
         res.writeHead(200, {state: 'block-saved'});
         res.end();
@@ -175,7 +217,7 @@ register("/command", (req, res)=>{
   req.on("end", ()=>{
     let data = JSON.parse(Buffer.concat(chunks).toString());
     if (data.command !== "getState") {
-      console.log(`local command: ${data.command}`);
+      log(`local command: ${data.command}`);
     }
     (new Promise((resolve, reject)=>commandHandler[data.command].call(null, data.value, resolve, reject)))
     .then(resData=>{
@@ -196,10 +238,10 @@ register(/.*/, (req, res) => {
 
 
 sendCommand("init", {
-  blocksize: config.blocksize,
-  port: config.port
+  blocksize: receiverConfig.blocksize,
+  port: receiverConfig.port
 }).then(state=>{
   if (state === "success"){
-    require("open")(`https://localhost:${config.port}/index`);
+    require("open")(`https://localhost:${receiverConfig.port}/index`);
   }
 });

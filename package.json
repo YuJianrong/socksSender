@@ -4,8 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "server": "node ./src/httpServer.js",
-    "debug-server": "devtool ./src/httpServer.js",
+    "receiver": "node ./src/httpReceiver.js",
+    "debug-receiver": "devtool ./src/httpReceiver.js",
     "sender": "node ./src/httpSender.js",
     "debug-sender": "devtool ./src/httpSender.js"
   },
