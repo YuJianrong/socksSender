@@ -116,13 +116,11 @@ const commandHandler = {
       };
       checkForResume();
       checkQueue();
-//      sendCommand("startDownload", val);
       resolve("success");
     }
   },
   resetDownload: (val, resolve) => {
     resetDownload();
-//    sendCommand("reset", val);
     resolve("success");
   }
 };
@@ -156,7 +154,6 @@ function checkQueue(){
         // retry in 60 s
         setTimeout(checkQueue, 60 * 1000);
       });
-//      sendFilePart(i);
     }
   }
 }

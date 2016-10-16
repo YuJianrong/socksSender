@@ -40,9 +40,6 @@ register(/^\/$/, (req, res) => {
   res.end('hello world\n');
 });
 
-//var downloadInfo = null;
-
-
 
 const downloadInfos = {};
 
@@ -89,25 +86,8 @@ const commandHandler = {
         lastVisited: Date.now()
       }
     }
-    sendFilePart(downloadInfos[filePath], val.blockid);
+    sendFilePart(filePath, val.blockid);
   },
-  // startDownload: val=>{
-  //   downloadInfo = {
-  //     file: val.file,
-  //     path: process.platform === 'win32' ? val.path.substr(1):val.path,
-  //   };
-  //   prepareFile();
-  //   checkQueue();
-  //   return "success";
-  // },
-  // reset: val=>{
-  //   if (!downloadInfo) {
-  //     return "success";
-  //   }
-  //   fs.closeSync(downloadInfo.fd);
-  //   downloadInfo = null;
-  //   return "success";
-  // }
 };
 
 register(/^\/command$/, (req, res) => {
@@ -143,45 +123,14 @@ setInterval(() => {
 }, 1 * 60 * 60 * 1000);
 
 
-// function prepareFile(){
-//   const filePath = path.join(downloadInfo.path, downloadInfo.file.name);
-//   downloadInfo.fd = fs.openSync(filePath, "r");
-//   downloadInfo.blocks = [];
-//   downloadInfo.blockNum = Math.ceil(downloadInfo.file.info.size / receiverConfig.blocksize);
-//   for(var i=0; i< downloadInfo.blockNum; ++i) {
-//     downloadInfo.blocks.push("not-uploaded");
-//   };
-// }
-
-// function updateBlock(fd, blockid, status){
-//   if (!downloadInfo || downloadInfo.fd !== fd) {
-//     return;
-//   }
-//   downloadInfo.blocks[blockid] = status;
-//   checkQueue();
-// }
-
-// function checkQueue(){
-//   const concurrentUpload = 3;
-//   let currentUpload = downloadInfo.blocks.filter(status => status === "uploading").length;
-//   let uploadedNum = 0;
-//   for( var i=0; i<downloadInfo.blockNum; ++i){
-//     if (currentUpload < concurrentUpload && downloadInfo.blocks[i] === "not-uploaded") {
-//       currentUpload ++;
-//       sendFilePart(i);
-//     }
-//     uploadedNum += downloadInfo.blocks[i] === "uploaded" ? 1 : 0;
-//   }
-//   if (uploadedNum === downloadInfo.blockNum) {
-//     commandHandler.reset();
-//   }
-// }
-
-function sendFilePart(downloadInfo, blockid) {
+function sendFilePart(key, blockid) {
+  let downloadInfo = downloadInfos[key];
+  if (!downloadInfo) {
+    return;
+  }
   log(`Upload file [${downloadInfo.file.name}] block [${blockid}]`);
   const size = blockid === downloadInfo.blockNum - 1 ? downloadInfo.file.info.size % receiverConfig.blocksize : receiverConfig.blocksize;
   const buf = new Buffer(size);
-  //  downloadInfo.blocks[blockid] = "uploading";
   downloadInfo.lastVisited = Date.now();
 
   (new Promise((resolve, reject) => fs.read(
@@ -216,17 +165,16 @@ function sendFilePart(downloadInfo, blockid) {
       socksPort: senderConfig.socks5 ? senderConfig.socks5.port : null,
     }, res => {
       if (res.statusCode === 200) {
-        //updateBlock(fd, blockid, "uploaded");
+        // block upload success
       } else {
         // retry in 60 s
-        setTimeout(() => sendFilePart(downloadInfo, blockid), 60 * 1000);
-        //updateBlock(fd, blockid, "not-uploaded");
+        setTimeout(() => sendFilePart(key, blockid), 60 * 1000);
       }
     });
     req.on("error", (e) => {
       log(`problem on send block[${blockid}]: ${e.message}`);
       // retry in 60 s
-      setTimeout(() => sendFilePart(downloadInfo, blockid), 60 * 1000);
+      setTimeout(() => sendFilePart(key, blockid), 60 * 1000);
     });
 
     req.write(buf);
