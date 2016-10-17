@@ -239,8 +239,8 @@ register("/saveData", (req, res) => {
           }
           resetDownload(downloadInfo.file.name);
         } else {
-          setTimeout(checkQueue, 10*1000);
-          //TODO: checkQueue();
+          //setTimeout(checkQueue, 10*1000);
+          checkQueue();
         }
         res.writeHead(200, {state: 'block-saved'});
         res.end();
