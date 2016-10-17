@@ -2,6 +2,11 @@
 <html>
 <head>
 <style>
+body{
+  font-weight: 100;
+  font-family: sans-serif;
+  line-height: 24px;
+}
 .dir-item{
   color: #579;
   cursor: pointer;
@@ -20,7 +25,7 @@
 <body>
 <section class="info">
   <div><span>Save to:</span><span id="save-to"></span></div>
-  <div id="download-state" data-downloading="false"><span>Downloading state:</span><span class="progress"></span><button id="stop">Stop</button></div>
+  <div id="download-queue"><span>Downloading queue:</span><ul id="queue"></ul></div>
 </section>
 <section class="list">
   <div>Path: <span id="path"></span></div>
@@ -29,6 +34,7 @@
 <section id="template" style="display:none">
   <li class="dir-item"><a></a></li>
   <li class="file-item"><span class="name"></span> <span class="size"></span><button>download</button></li>
+  <li class="download-item"><span class="name"></span> <span class="progress"></span><button>Stop</button></li>
 </section>
 <script src="/script"></script>
 

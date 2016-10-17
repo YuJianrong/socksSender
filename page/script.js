@@ -10,11 +10,19 @@ function sendCommand(command, value){
 
 setInterval(()=>sendCommand("getState").then(val=>{
   $("#save-to").textContent = val["save-to"];
-  $("#download-state").setAttribute("data-downloading", val["download-state"] ? "true" : "false");
+  let ul = $("#queue");
+  ul.innerHTML = "";
+  val["download-queue"].forEach(downloadInfo => {
+    let li = $("#template .download-item").cloneNode(true);
+    li.querySelector(".name").textContent = downloadInfo.file.name;
+    li.querySelector(".progress").textContent = `(${downloadInfo.loadedBlock}/${downloadInfo.blockNum})`;
+    li.querySelector("button").addEventListener("click", () => sendCommand("resetDownload", {file: downloadInfo.file}));
+    ul.appendChild(li);
+  });
   $("#download-state .progress").textContent = val["download-state"] || "not downloading";
 }),1000);
 
-$("#stop").addEventListener("click", () => sendCommand("resetDownload"), false);
+//$("#stop").addEventListener("click", () => sendCommand("resetDownload"), false);
 
 function gotoDir(path){
   var ul = $("#dir-list");

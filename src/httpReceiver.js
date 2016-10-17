@@ -72,60 +72,80 @@ function sendCommand(command, value, extraMsg){
       var chunks = [];
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString())));
-      res.on('error', e => reject(e));
+      res.on('error', e => reject({code: res.statusCode, err: e}));
     });
     req.on("error", (e) => {
       log(`Error: ${e.message}`);
-      reject(e);
+      reject({code: 0, err: e});
     });
     req.end(JSON.stringify(commandData));
   });
 }
 
-var downloadInfo = null;
+var downloadInfos = [];
+function saveDownloading(){
+  fs.writeFileSync("downloading.json", JSON.stringify(downloadInfos.map(downloadInfo => ({file: downloadInfo.file, path: downloadInfo.path}))));
+}
+function loadDownloading(){
+  try {
+    let downloads = JSON.parse(fs.readFileSync("downloading.json", "utf-8"));
+    downloads.forEach(val => initDownload(val));
+  } catch(e){
 
-function resetDownload(){
+  }
+}
+
+function resetDownload(filename) {
+  let downloadInfo = null, index = -1;
+  for (let i = 0; i < downloadInfos.length; ++i) {
+    if (downloadInfos[i].file.name === filename) {
+      downloadInfo = downloadInfos[i];
+      index = i;
+      break;
+    }
+  }
   if (!downloadInfo) {
     return;
   }
-  for(var i=0 ; i<downloadInfo.blockNum; ++i) {
-    try{
+  for (let i = 0; i < downloadInfo.blockNum; ++i) {
+    try {
       fs.unlinkSync(`${downloadInfo.file.name}.${i}`);
-    } catch(e) {}
+    } catch (e) { }
   }
-  downloadInfo = null;
+  downloadInfos.splice(index, 1);
+  saveDownloading();
+  checkQueue();
 }
 
 const commandHandler = {
   getState: (val , resolve) => resolve({
     "save-to" : receiverConfig["save-to"],
-    "download-state": downloadInfo ? `${downloadInfo.file.name} (${downloadInfo.loadedBlock}/${downloadInfo.blockNum})`: null
+    "download-queue": downloadInfos.map(downloadInfo => ({file: downloadInfo.file, loadedBlock: downloadInfo.loadedBlock, blockNum: downloadInfo.blockNum}))
   }),
-  remoteCommand: (val, resolve, reject) => sendCommand(val.command, val.value).then(resData=>resolve(resData), e=>reject(e.message)),
+  remoteCommand: (val, resolve, reject) => sendCommand(val.command, val.value).then(resData=>resolve(resData), e => reject(e.err.message)),
   startDownload: (val, resolve, reject) => {
-    if (downloadInfo) {
-      reject("One file in downloading! Multiple download is not supported!");
+    if (downloadInfos.some(downloadInfo => downloadInfo.file.name === val.file.name)) {
+      reject("File is already in download queue!");
     } else {
-      let blockNum= Math.ceil(val.file.info.size / receiverConfig.blocksize);
-      downloadInfo = {
-        file: val.file,
-        path: val.path,
-        blockNum,
-        loadedBlock: 0,
-        blocks: Array(blockNum)
-      };
-      checkForResume();
-      checkQueue();
+      initDownload(val);
       resolve("success");
     }
   },
   resetDownload: (val, resolve) => {
-    resetDownload();
+    resetDownload(val.file.name);
     resolve("success");
   }
 };
 
-function checkForResume(){
+function initDownload(val){
+  let blockNum= Math.ceil(val.file.info.size / receiverConfig.blocksize);
+  let downloadInfo = {
+    file: val.file,
+    path: val.path,
+    blockNum,
+    loadedBlock: 0,
+    blocks: Array(blockNum)
+  };
   for(let blockid=0; blockid<downloadInfo.blockNum; ++blockid) {
     const blockName = downloadInfo.file.name + "." + blockid;
     const size = blockid === downloadInfo.blockNum - 1 ? downloadInfo.file.info.size % receiverConfig.blocksize : receiverConfig.blocksize;
@@ -136,24 +156,36 @@ function checkForResume(){
       downloadInfo.blocks[blockid] = "not-downloaded";
     }
   }
+  downloadInfos.push(downloadInfo);
+  checkQueue();
+  saveDownloading();
 }
 
-function checkQueue(){
-  if (!downloadInfo){
+function checkQueue() {
+  let downloading = downloadInfos.reduce((sum, downloadInfo) => sum + downloadInfo.blocks.filter(status => status === "downloading").length, 0);
+  if (downloading >= concurrentDownload) {
     return;
   }
-  let downloading = downloadInfo.blocks.filter(status => status === "downloading").length;
-  for( let blockid=0; blockid<downloadInfo.blockNum; ++blockid){
-    if (downloading < concurrentDownload && downloadInfo.blocks[blockid] === "not-downloaded") {
-      downloading ++;
-      downloadInfo.blocks[blockid] = "downloading";
-      sendCommand("getBlock", { file: downloadInfo.file, path: downloadInfo.path, blockid}, `${downloadInfo.file.name} : [${blockid}]` )
-      .catch(e => {
-        log(`Error: ${e.message}`);
-        downloadInfo.blocks[blockid] = "not-downloaded";
-        // retry in 60 s
-        setTimeout(checkQueue, 60 * 1000);
-      });
+  for (let i = 0; i < downloadInfos.length; ++i) {
+    let downloadInfo = downloadInfos[i];
+    for (let blockid = 0; blockid < downloadInfo.blockNum; ++blockid) {
+      if (downloadInfo.blocks[blockid] === "not-downloaded") {
+        downloading++;
+        downloadInfo.blocks[blockid] = "downloading";
+        sendCommand("getBlock", { file: downloadInfo.file, path: downloadInfo.path, blockid }, `${downloadInfo.file.name} : [${blockid}]`)
+        .catch(e => {
+          if (e.code === 500) {
+            log(`Error: ${e.err.message}, download aborted!`);
+          } else {
+            log(`Error: ${e.err.message}, Retry in 60s`);
+            downloadInfo.blocks[blockid] = "not-downloaded";
+            // retry in 60 s
+            setTimeout(checkQueue, 60 * 1000);
+          }
+        });
+        setTimeout(checkQueue, 0);
+        return;
+      }
     }
   }
 }
@@ -172,7 +204,8 @@ register("/saveData", (req, res) => {
       res.end();
       return;
     } else {
-      if (!downloadInfo || downloadInfo.file.name !== decodeURI(req.headers.file)) {
+      let downloadInfo = downloadInfos.find(downloadInfo => downloadInfo.file.name === decodeURI(req.headers.file));
+      if (!downloadInfo) {
         // the download may had been reset, so response 200 to stop resend the block
         res.writeHead(200, {state: 'wrong-file'});
         res.end();
@@ -204,9 +237,10 @@ register("/saveData", (req, res) => {
               }
             }
           }
-          resetDownload();
+          resetDownload(downloadInfo.file.name);
         } else {
-          checkQueue();
+          setTimeout(checkQueue, 10*1000);
+          //TODO: checkQueue();
         }
         res.writeHead(200, {state: 'block-saved'});
         res.end();
@@ -251,5 +285,6 @@ sendCommand("init", {
 }).then(state=>{
   if (state === "success"){
     require("open")(`https://localhost:${receiverConfig.port}/index`);
+    loadDownloading();
   }
 });

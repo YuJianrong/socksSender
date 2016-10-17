@@ -2,3 +2,6 @@
 npm-debug.log
 node_modules
 .exvim.*
+downloading.json
+receiverConfig.json
+senderConfig.json

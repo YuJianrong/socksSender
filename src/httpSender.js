@@ -55,28 +55,32 @@ const commandHandler = {
     }
     return "success";
   },
-  listDir: val => {
-    if (process.platform === 'win32') {
-      if (val.path === "/") {
-        let drivers = [];
-        for (var c = 67; c <= 90; ++c) {
-          try {
-            fs.readdirSync(String.fromCharCode(c) + ":/");
-            drivers.push({ name: String.fromCharCode(c) + ":", info: { size: 0, file: false } });
-          } catch (e) { };
-        }
-        return drivers;
-      } else {
-        val.path = val.path.substr(1);
-      }
-    }
-    const files = fs.readdirSync(val.path);
+  listDir: val => {    
     const dir = [];
-    for (let i = 0; i < files.length; ++i) {
-      try {
-        dir.push({ name: files[i], info: (stat => ({ size: stat.size, file: stat.isFile() }))(fs.statSync(path.join(val.path, files[i]))) });
-      } catch (e) {
+    try{
+      if (process.platform === 'win32') {
+        if (val.path === "/") {
+          let drivers = [];
+          for (var c = 67; c <= 90; ++c) {
+            try {
+              fs.readdirSync(String.fromCharCode(c) + ":/");
+              drivers.push({ name: String.fromCharCode(c) + ":", info: { size: 0, file: false } });
+            } catch (e) { };
+          }
+          return drivers;
+        } else {
+          val.path = val.path.substr(1);
+        }
       }
+      const files = fs.readdirSync(val.path);
+      for (let i = 0; i < files.length; ++i) {
+        try {
+          dir.push({ name: files[i], info: (stat => ({ size: stat.size, file: stat.isFile() }))(fs.statSync(path.join(val.path, files[i]))) });
+        } catch (e) {
+        }
+      }
+    } catch(e){
+      dir.push({name: "Access Denine", info:{size: 0, file: true}});
     }
     return dir;
   },
@@ -103,8 +107,14 @@ register(/^\/command$/, (req, res) => {
   req.on("end", () => {
     let data = JSON.parse(Buffer.concat(chunks).toString());
     log(`run command: ${data.command}`);
-    res.writeHead(200);
-    res.end(JSON.stringify(commandHandler[data.command].call(null, data.value, req) || "success"));
+    try {
+      let resData = JSON.stringify(commandHandler[data.command].call(null, data.value, req) || "success");
+      res.writeHead(200);
+      res.end(resData);
+    } catch(e) {
+      res.writeHead(500);
+      res.end(e.message);      
+    }
   });
 });
 
@@ -172,6 +182,7 @@ function sendFilePart(key, blockid) {
         // block upload success
       } else {
         // retry in 60 s
+        log(`Send block[${blockid}] unsuccess, status code[${res.statusCode}], retry in 60s`);
         setTimeout(() => sendFilePart(key, blockid), 60 * 1000);
       }
     });
